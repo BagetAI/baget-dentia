@@ -91,3 +91,28 @@ CREATE TABLE booking_holds (
 
 CREATE INDEX idx_booking_holds_expiration ON booking_holds (expires_at);
 CREATE INDEX idx_booking_holds_overlap ON booking_holds (chair_id, start_time, end_time);
+
+-- 7. Patient Reminders tracking table (Logs auto-sms status, delivery, error logs)
+CREATE TABLE patient_reminders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE NOT NULL,
+    patient_id UUID REFERENCES patients(id) ON DELETE CASCADE NOT NULL,
+    appointment_id UUID REFERENCES appointments(id) ON DELETE SET NULL,
+    reminder_type VARCHAR(50) NOT NULL, -- 'recall', 'reminder_24h', 'reminder_2h'
+    channel VARCHAR(20) DEFAULT 'sms' NOT NULL, -- 'sms', 'email'
+    status VARCHAR(50) DEFAULT 'pending' NOT NULL, -- 'pending', 'sent', 'delivered', 'failed', 'responded'
+    message_body TEXT NOT NULL,
+    twilio_sid VARCHAR(100),
+    error_message TEXT,
+    sent_at TIMESTAMP WITH TIME ZONE,
+    delivered_at TIMESTAMP WITH TIME ZONE,
+    response_payload TEXT, -- JSON or raw response from patient if any
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    CONSTRAINT chk_reminder_type CHECK (reminder_type IN ('recall', 'reminder_24h', 'reminder_2h')),
+    CONSTRAINT chk_reminder_status CHECK (status IN ('pending', 'sent', 'delivered', 'failed', 'responded'))
+);
+
+CREATE INDEX idx_reminders_clinic ON patient_reminders(clinic_id);
+CREATE INDEX idx_reminders_patient ON patient_reminders(patient_id);
+CREATE INDEX idx_reminders_status ON patient_reminders(status);

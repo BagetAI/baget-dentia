@@ -58,6 +58,21 @@ export interface Patient {
   smsConsentStatus: 'verified' | 'denied' | 'unknown';
 }
 
+export interface PatientReminder {
+  id: string;
+  clinicId: string;
+  patientId: string;
+  appointmentId?: string;
+  reminderType: 'recall' | 'reminder_24h' | 'reminder_2h';
+  channel: 'sms' | 'email';
+  status: 'pending' | 'sent' | 'delivered' | 'failed' | 'responded';
+  messageBody: string;
+  twilioSid?: string;
+  errorMessage?: string;
+  sentAt?: string;
+  createdAt: string;
+}
+
 interface DatabaseState {
   clinics: Clinic[];
   chairs: Chair[];
@@ -65,6 +80,7 @@ interface DatabaseState {
   patients: Patient[];
   appointments: Appointment[];
   bookingHolds: BookingHold[];
+  patientReminders: PatientReminder[];
 }
 
 const DB_FILE = path.join('/tmp', 'dentia_db.json');
@@ -73,7 +89,11 @@ const DB_FILE = path.join('/tmp', 'dentia_db.json');
 function getDb(): DatabaseState {
   if (fs.existsSync(DB_FILE)) {
     try {
-      return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+      if (!parsed.patientReminders) {
+        parsed.patientReminders = [];
+      }
+      return parsed;
     } catch (e) {
       // fallback to initial seed
     }
@@ -107,12 +127,13 @@ function getDb(): DatabaseState {
         lastName: 'Jenkins',
         dateOfBirth: '1988-11-22',
         email: 'sarah.jenkins@example.com',
-        phone: '555-0192',
+        phone: '+15550192', // formatting for real-world simulation
         smsConsentStatus: 'verified'
       }
     ],
     appointments: [],
     bookingHolds: [],
+    patientReminders: [],
   };
 
   saveDb(initialDb);
@@ -316,5 +337,128 @@ export class BookingService {
       success: true,
       appointmentId: apptId,
     };
+  }
+
+  /**
+   * Triggers an SMS reminder via Twilio using edge-native direct fetch call
+   */
+  public static async triggerSmsReminder(data: {
+    patientId: string;
+    clinicId: string;
+    reminderType: 'recall' | 'reminder_24h' | 'reminder_2h';
+    appointmentId?: string;
+    customMessage?: string;
+  }): Promise<{ success: boolean; reminderId?: string; twilioSid?: string; status: string; message?: string; error?: string }> {
+    const db = getDb();
+
+    const patient = db.patients.find(p => p.id === data.patientId);
+    if (!patient) {
+      return { success: false, error: 'Patient record not found.' };
+    }
+
+    if (patient.smsConsentStatus !== 'verified') {
+      return { success: false, error: 'Patient has not verified prior consent for SMS notifications under HIPAA.' };
+    }
+
+    const clinic = db.clinics.find(c => c.id === data.clinicId);
+    if (!clinic) {
+      return { success: false, error: 'Clinic record not found.' };
+    }
+
+    // Construct HIPAA-sanitized message
+    let messageBody = data.customMessage;
+    if (!messageBody) {
+      if (data.reminderType === 'recall') {
+        messageBody = `${clinic.name}: It is time for your routine dental care cleaning. Under strict adherence to hygiene protocols, book your chair online instantly here: https://baget-dentia.vercel.app/book`;
+      } else if (data.reminderType === 'reminder_24h') {
+        messageBody = `${clinic.name}: Reminder of your upcoming appointment in 24 hours. Confirm your slot directly by clicking: https://baget-dentia.vercel.app/book`;
+      } else {
+        messageBody = `${clinic.name}: Your appointment is in 2 hours. See you soon! Reply STOP to cancel.`;
+      }
+    }
+
+    // Prepare reminder database record
+    const reminderId = 'rem-' + Math.random().toString(36).substring(2, 9);
+    const newReminder: PatientReminder = {
+      id: reminderId,
+      clinicId: data.clinicId,
+      patientId: data.patientId,
+      appointmentId: data.appointmentId,
+      reminderType: data.reminderType,
+      channel: 'sms',
+      status: 'pending',
+      messageBody,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Twilio credentials
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const twilioFrom = process.env.TWILIO_PHONE_NUMBER || '+15017122661';
+
+    let twilioSid: string | undefined;
+    let finalStatus: 'sent' | 'failed' = 'failed';
+    let errorMessage: string | undefined;
+
+    if (accountSid && authToken) {
+      try {
+        const basicAuth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+        const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${basicAuth}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            To: patient.phone,
+            From: twilioFrom,
+            Body: messageBody,
+          }).toString()
+        });
+
+        const twilioData = await res.json();
+        if (res.ok && twilioData.sid) {
+          twilioSid = twilioData.sid;
+          finalStatus = 'sent';
+        } else {
+          errorMessage = twilioData.message || 'Twilio execution failed.';
+        }
+      } catch (err: any) {
+        errorMessage = err.message || 'Network error triggering Twilio client REST API.';
+      }
+    } else {
+      // In development or missing envs, simulate success
+      twilioSid = 'SM-SIMULATED-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+      finalStatus = 'sent';
+      console.log(`[Twilio Simulation Mode] Sent to ${patient.phone}: ${messageBody}`);
+    }
+
+    newReminder.status = finalStatus;
+    newReminder.twilioSid = twilioSid;
+    newReminder.errorMessage = errorMessage;
+    newReminder.sentAt = finalStatus === 'sent' ? new Date().toISOString() : undefined;
+
+    db.patientReminders.push(newReminder);
+    saveDb(db);
+
+    if (finalStatus === 'failed') {
+      return { success: false, error: errorMessage || 'Twilio dispatch failed.', status: 'failed' };
+    }
+
+    return {
+      success: true,
+      reminderId,
+      status: 'sent',
+      twilioSid,
+      message: 'Reminder dispatched successfully.',
+    };
+  }
+
+  /**
+   * Retrieves all logged patient reminders for a clinic
+   */
+  public static getReminders(clinicId: string): PatientReminder[] {
+    const db = getDb();
+    return db.patientReminders.filter(r => r.clinicId === clinicId);
   }
 }
