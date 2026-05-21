@@ -116,3 +116,16 @@ CREATE TABLE patient_reminders (
 CREATE INDEX idx_reminders_clinic ON patient_reminders(clinic_id);
 CREATE INDEX idx_reminders_patient ON patient_reminders(patient_id);
 CREATE INDEX idx_reminders_status ON patient_reminders(status);
+
+-- 8. Waitlist Signups Table (Captured from landing page waitlist form)
+CREATE TABLE waitlist_signups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    full_name VARCHAR(255) NOT NULL,
+    practice_name VARCHAR(255) NOT NULL,
+    practice_email VARCHAR(255) NOT NULL UNIQUE,
+    current_pms VARCHAR(100) NOT NULL, -- 'Open Dental', 'Dentrix', 'Eaglesoft', 'Other'
+    chair_count VARCHAR(50) NOT NULL, -- '1-2 chairs', '3-4 chairs', '5+ chairs'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
+CREATE INDEX idx_waitlist_email ON waitlist_signups(practice_email);

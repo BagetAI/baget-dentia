@@ -73,6 +73,16 @@ export interface PatientReminder {
   createdAt: string;
 }
 
+export interface WaitlistSignup {
+  id: string;
+  fullName: string;
+  practiceName: string;
+  practiceEmail: string;
+  currentPms: string;
+  chairCount: string;
+  createdAt: string;
+}
+
 interface DatabaseState {
   clinics: Clinic[];
   chairs: Chair[];
@@ -81,6 +91,7 @@ interface DatabaseState {
   appointments: Appointment[];
   bookingHolds: BookingHold[];
   patientReminders: PatientReminder[];
+  waitlistSignups: WaitlistSignup[];
 }
 
 const DB_FILE = path.join('/tmp', 'dentia_db.json');
@@ -92,6 +103,9 @@ function getDb(): DatabaseState {
       const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
       if (!parsed.patientReminders) {
         parsed.patientReminders = [];
+      }
+      if (!parsed.waitlistSignups) {
+        parsed.waitlistSignups = [];
       }
       return parsed;
     } catch (e) {
@@ -134,6 +148,7 @@ function getDb(): DatabaseState {
     appointments: [],
     bookingHolds: [],
     patientReminders: [],
+    waitlistSignups: [],
   };
 
   saveDb(initialDb);
@@ -460,5 +475,54 @@ export class BookingService {
   public static getReminders(clinicId: string): PatientReminder[] {
     const db = getDb();
     return db.patientReminders.filter(r => r.clinicId === clinicId);
+  }
+
+  /**
+   * Adds a new waitlist signup record
+   */
+  public static addWaitlistSignup(signupData: {
+    fullName: string;
+    practiceName: string;
+    practiceEmail: string;
+    currentPms: string;
+    chairCount: string;
+  }): { success: boolean; signupId?: string; error?: string } {
+    const db = getDb();
+
+    // Check if email already registered to prevent duplicates
+    const exists = db.waitlistSignups.some(
+      s => s.practiceEmail.toLowerCase() === signupData.practiceEmail.toLowerCase()
+    );
+
+    if (exists) {
+      return { success: false, error: 'This practice email has already been registered on our priority waitlist.' };
+    }
+
+    const signupId = 'wt-' + Math.random().toString(36).substring(2, 9);
+    const newSignup: WaitlistSignup = {
+      id: signupId,
+      fullName: signupData.fullName,
+      practiceName: signupData.practiceName,
+      practiceEmail: signupData.practiceEmail,
+      currentPms: signupData.currentPms,
+      chairCount: signupData.chairCount,
+      createdAt: new Date().toISOString()
+    };
+
+    db.waitlistSignups.push(newSignup);
+    saveDb(db);
+
+    return {
+      success: true,
+      signupId
+    };
+  }
+
+  /**
+   * Retrieves all waitlist signups (for admin review)
+   */
+  public static getWaitlistSignups(): WaitlistSignup[] {
+    const db = getDb();
+    return db.waitlistSignups || [];
   }
 }
