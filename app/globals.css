@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand-primary: #6B2D3E; /* Deep burgundy */
+  --brand-secondary: #2C3E50; /* Faded navy */
+  --brand-background: #F4ECD8; /* Warm cream */
+  --brand-text: #4A3728; /* Warm sepia */
+}
+
+body {
+  background-color: var(--brand-background);
+  color: var(--brand-text);
+  font-family: 'Lato', sans-serif;
+}
+
+h1, h2, h3, h4, .font-serif {
+  font-family: 'Libre Baskerville', serif;
+}
